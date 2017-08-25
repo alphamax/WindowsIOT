@@ -1,8 +1,11 @@
 ﻿using Microsoft.IoT.Lightning.Providers;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Windows.ApplicationModel.Background;
 using Windows.Devices;
+using Windows.Devices.Gpio;
 using Windows.Devices.Pwm;
 
 namespace Tourelle
@@ -13,12 +16,19 @@ namespace Tourelle
         private const int X_PIN = 18;
         //For tilt
         private const int Y_PIN = 23;
+
+        //Laser connected pin
+        private List<int> LASER_PIN = new List<int>() { 24, 25, 21, 7, 16 };
+
         //Token to keep alive the background task
         BackgroundTaskDeferral GlobalDeferal;
         //PWM pin for pan
         PwmPin servoGpioPinX;
         //PWM pin for tilt
         PwmPin servoGpioPinY;
+
+        //GPIO Pin for lasers
+        GpioPin[] GPIOPIN_LASER;
 
         public void Run(IBackgroundTaskInstance taskInstance)
         {
@@ -34,6 +44,17 @@ namespace Tourelle
             if (LightningProvider.IsLightningEnabled)
             {
                 LowLevelDevicesController.DefaultProvider = LightningProvider.GetAggregateProvider();
+            }
+
+            var gpio = GpioController.GetDefault();
+            GPIOPIN_LASER = new GpioPin[5];
+
+            //Init lasers states
+            for (int i = 0; i < LASER_PIN.Count; i++)
+            {
+                GPIOPIN_LASER[i] = gpio.OpenPin(LASER_PIN[i]);
+                GPIOPIN_LASER[i].Write(GpioPinValue.Low);
+                GPIOPIN_LASER[i].SetDriveMode(GpioPinDriveMode.Output);
             }
 
             var pwmControllers = await PwmController.GetControllersAsync(LightningPwmProvider.GetPwmProvider());
@@ -53,8 +74,45 @@ namespace Tourelle
             }
         }
 
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="index">0..4 as values</param>
+        private void SwitchOnLaser(int index)
+        {
+            GPIOPIN_LASER[index].Write(GpioPinValue.High);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="index">0..4 as values</param>
+        private void SwitchOffLaser(int index)
+        {
+            GPIOPIN_LASER[index].Write(GpioPinValue.Low);
+        }
+
+        private void SwitchOnAllLaser()
+        {
+            for (int i = 0; i < GPIOPIN_LASER.Count(); i++)
+            {
+                SwitchOnLaser(i);
+            }
+        }
+
+        private void SwitchOffAllLaser()
+        {
+            for (int i = 0; i < GPIOPIN_LASER.Count(); i++)
+            {
+                SwitchOffLaser(i);
+            }
+        }
+
         private void MakeRandom()
         {
+
+            SwitchOnAllLaser();
+
             //Startup
             //Rotate left...
             RotateX(-90);
@@ -81,7 +139,9 @@ namespace Tourelle
             Random r = new Random(DateTime.Now.Millisecond);
             while (true)
             {
+
                 //Set random rotation for pan and tilt
+                //Ensure double rotation during same delay
                 RotateX(r.NextDouble() * 180.0 - 90.0);
                 RotateY(r.NextDouble() * 90.0);
                 //Wait rotation finished
@@ -90,7 +150,16 @@ namespace Tourelle
                 StopRotation(servoGpioPinX);
                 StopRotation(servoGpioPinY);
                 //Wait 5 sec between next rotation
-                Task.Delay(5000).Wait();
+
+                //Blink light for 5 secs.
+                for (int i = 0; i < 50; i++)
+                {
+                    Task.Delay(50).Wait();
+                    SwitchOffAllLaser();
+                    Task.Delay(50).Wait();
+                    SwitchOnAllLaser();
+                }
+
             }
         }
         /// <summary>
